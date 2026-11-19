@@ -2,7 +2,7 @@ import { chromium } from 'playwright';
 import fs from 'fs';
 
 // ==========================================
-// 1. CONFIGURATION (Add your layoutIds here)
+// 1. CONFIGURATION (All 4 of your aisles ready!)
 // ==========================================
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
@@ -15,11 +15,7 @@ const CATEGORIES = [
   { name: "Protein & Sports", layoutId: "31731" },
   { name: "Electronics & Cables", layoutId: "32826" },
   { name: "Skincare & Grooming", layoutId: "38952" },
-  { name: "Home & Kitchen", layoutId: "38444" }
-  // Uncomment and paste your actual 5-digit layoutIds below:
-  // { name: "Electronics & Cables", layoutId: "PASTE_ELECTRONICS_ID" },
-  // { name: "Skincare & Grooming", layoutId: "PASTE_SKINCARE_ID" },
-  // { name: "Home & Kitchen", layoutId: "PASTE_HOME_ID" },
+  { name: "Home & Kitchen", layoutId: "38444" },
 ];
 
 const SEEN_FILE = 'seen_deals.json';
@@ -57,26 +53,78 @@ async function sendTelegramAlert(deal) {
 }
 
 async function run() {
-  console.log("🚀 Launching headless Chromium...");
-  const browser = await chromium.launch({ headless: true });
+  console.log("🚀 Launching stealth Chromium...");
+  const browser = await chromium.launch({
+    headless: true,
+    args: [
+      '--disable-blink-features=AutomationControlled',
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+    ],
+  });
+
+  // Grab the browser's real User-Agent and strip "Headless" so TLS & headers match 100%
+  const tempCtx = await browser.newContext();
+  const tempPage = await tempCtx.newPage();
+  const rawUA = await tempPage.evaluate(() => navigator.userAgent);
+  const cleanUA = rawUA.replace(/HeadlessChrome/g, 'Chrome');
+  await tempCtx.close();
 
   const context = await browser.newContext({
     viewport: { width: 1366, height: 768 },
     locale: 'en-IN',
     timezoneId: 'Asia/Kolkata',
-    geolocation: { latitude: 28.4221038, longitude: 77.0718319 },
+    geolocation: { latitude: 28.42210381778555, longitude: 77.0718319276474 },
     permissions: ['geolocation'],
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    userAgent: cleanUA,
   });
+
+  // Hide the "I am a robot" webdriver flag before any page loads
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+  });
+
+  // Pre-load Sector 57, Gurugram location cookies so the browser doesn't wake up with amnesia
+  const encodedLocation = encodeURIComponent(
+    JSON.stringify({
+      address: "Block F, Sector 57, Gurugram, Haryana 122011, India",
+      lat: 28.42210381778555,
+      lng: 77.0718319276474,
+      id: "",
+      annotation: "Block F, Sector 57, Gurugram, Haryana 122011, India",
+      name: "",
+    })
+  );
+
+  await context.addCookies([
+    { name: 'userLocation', value: encodedLocation, domain: '.swiggy.com', path: '/' },
+    { name: 'platform', value: 'web', domain: '.swiggy.com', path: '/' },
+    { name: 'subplatform', value: 'dweb', domain: '.swiggy.com', path: '/' },
+    { name: 'versionCode', value: '1200', domain: '.swiggy.com', path: '/' },
+    { name: 'userLocation', value: encodedLocation, domain: '.instamart.in', path: '/' },
+  ]);
 
   const page = await context.newPage();
 
-  console.log("🌐 Opening Instamart to initialize session...");
-  await page.goto('https://www.swiggy.com/instamart', {
-    waitUntil: 'domcontentloaded',
-    timeout: 45000,
-  });
-  await page.waitForTimeout(4000);
+  console.log("🌐 Opening Instamart and waiting for security pass...");
+  try {
+    await page.goto('https://www.swiggy.com/instamart', {
+      waitUntil: 'networkidle',
+      timeout: 35000,
+    });
+  } catch {
+    // networkidle can time out if analytics keep pinging; that's fine
+  }
+  await page.waitForTimeout(5000);
+
+  // X-RAY DIAGNOSTIC: Show us exactly what Swiggy showed the cloud browser
+  const finalUrl = page.url();
+  const pageTitle = await page.title();
+  const cookies = await context.cookies();
+  const cookieNames = [...new Set(cookies.map((c) => c.name))];
+  console.log(`🧭 Landed on: ${finalUrl}`);
+  console.log(`📄 Page Title: ${pageTitle}`);
+  console.log(`🍪 Cookies received (${cookieNames.length}): ${cookieNames.join(', ') || 'NONE'}`);
 
   const allLiveDeals = [];
 
@@ -105,16 +153,34 @@ async function run() {
             const res = await fetch(url, {
               method: 'GET',
               cache: 'no-store',
+              credentials: 'include',
               headers: {
                 accept: '*/*',
                 'content-type': 'application/json',
                 'x-build-version': '2.393.0',
               },
             });
-            logs.push(`offset=${offset} -> HTTP ${res.status}`);
-            if (res.status !== 200) continue;
 
-            const raw = await res.json();
+            const rawText = await res.text();
+            if (res.status !== 200) {
+              logs.push(`offset=${offset} -> HTTP ${res.status} (${rawText.length} bytes)`);
+              continue;
+            }
+            if (!rawText || rawText.trim().length === 0) {
+              logs.push(`offset=${offset} -> HTTP 200 (EMPTY 0 bytes - silent block)`);
+              continue;
+            }
+
+            let raw;
+            try {
+              raw = JSON.parse(rawText);
+            } catch {
+              const preview = rawText.replace(/\s+/g, ' ').slice(0, 100);
+              logs.push(`offset=${offset} -> HTTP 200 (NOT JSON: "${preview}...")`);
+              continue;
+            }
+
+            logs.push(`offset=${offset} -> HTTP 200 OK (${rawText.length} bytes)`);
 
             const hunt = (node) => {
               if (!node || typeof node !== 'object') return;
@@ -181,7 +247,6 @@ async function run() {
   }
   const finalDeals = Array.from(uniqueMap.values()).sort((a, b) => b.disc - a.disc);
 
-  // Load anti-spam memory
   let seenMemory = {};
   if (fs.existsSync(SEEN_FILE)) {
     try {
@@ -201,7 +266,6 @@ async function run() {
     }
   }
 
-  // Save memory + live database for our upcoming website
   fs.writeFileSync(SEEN_FILE, JSON.stringify(seenMemory, null, 2));
   fs.writeFileSync(
     DEALS_FILE,
