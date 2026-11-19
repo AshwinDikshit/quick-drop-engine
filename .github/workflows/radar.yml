@@ -1,0 +1,37 @@
+name: QuickDrop Radar
+
+on:
+  schedule:
+    - cron: '*/15 * * * *' # Runs automatically every 15 minutes
+  workflow_dispatch:       # Adds a manual "Run workflow" test button
+
+jobs:
+  scan-deals:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright & Chromium
+        run: |
+          npm install
+          npx playwright install chromium
+
+      - name: Run Price Drop Radar
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: node tracker.js
+
+      - name: Save live deals database to repo
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "QuickDrop Bot"
+          git add deals.json seen_deals.json
+          git diff --staged --quiet || git commit -m "Update live deals database"
+          git push
