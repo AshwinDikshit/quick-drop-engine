@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Blink Deals — Live 10-Min Price Drop Radar</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background-color: #09090b; color: #f4f4f5; font-family: system-ui, -apple-system, sans-serif; }
+    .deal-card { transition: transform 0.18s ease, border-color 0.18s ease; }
+    .deal-card:hover { transform: translateY(-4px); border-color: #22c55e; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- Top Navigation -->
+  <header class="sticky top-0 z-50 backdrop-blur-md bg-zinc-950/85 border-b border-zinc-800">
+    <div class="max-w-6xl mx-auto px-4 py-3.5 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-2.5">
+        <span class="relative flex h-3 w-3">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+        </span>
+        <h1 class="text-lg sm:text-xl font-extrabold tracking-tight text-white">
+          BLINK<span class="text-green-400">DEALS</span>
+        </h1>
+        <span class="hidden sm:inline-block text-xs px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700">
+          60%+ Drops Only
+        </span>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <span id="lastUpdated" class="text-xs text-zinc-400 hidden md:inline">Syncing radar...</span>
+        <!-- REPLACE THE HREF BELOW WITH YOUR REAL TELEGRAM CHANNEL LINK -->
+        <a href="https://t.me/blink_deals" target="_blank"
+           class="bg-green-500 hover:bg-green-400 text-zinc-950 font-bold text-xs sm:text-sm px-4 py-2 rounded-lg transition shadow-lg shadow-green-500/20">
+          ⚡ Join Instant Telegram Alerts
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero & Filters -->
+  <main class="max-w-6xl w-full mx-auto px-4 py-6 flex-1">
+    <div class="mb-6">
+      <h2 class="text-2xl sm:text-3xl font-bold text-white mb-1">
+        Live Dark-Store Clearance Drops
+      </h2>
+      <p class="text-sm text-zinc-400">
+        Auto-scanned across 10-minute delivery platforms. Items sell out in minutes—grab fast or join Telegram for instant push alerts.
+      </p>
+    </div>
+
+    <!-- Search & Filter Bar -->
+    <div class="flex flex-col sm:flex-row gap-3 mb-6">
+      <input id="searchInput" type="text" placeholder="Search earbuds, protein, yoga mat, bedsheet..."
+             class="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-2.5 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-green-500" />
+      <select id="cityFilter"
+              class="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2.5 text-sm text-zinc-200 focus:outline-none focus:border-green-500">
+        <option value="ALL">📍 All Cities</option>
+      </select>
+      <select id="sortFilter"
+              class="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2.5 text-sm text-zinc-200 focus:outline-none focus:border-green-500">
+        <option value="disc">🔥 Highest % Off</option>
+        <option value="saved">💰 Highest ₹ Saved</option>
+        <option value="price">🏷️ Lowest Price</option>
+      </select>
+    </div>
+
+    <!-- Aisle Filter Pills -->
+    <div id="aislePills" class="flex flex-wrap gap-2 mb-6"></div>
+
+    <!-- Stats Row -->
+    <div class="flex items-center justify-between text-xs text-zinc-400 mb-4">
+      <span id="dealCount">Loading live deals...</span>
+      <button onclick="loadDeals()" class="text-green-400 hover:underline">↻ Refresh Feed</button>
+    </div>
+
+    <!-- Deals Grid -->
+    <div id="dealsGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div class="col-span-full text-center py-16 text-zinc-500">Scanning live dark-store database...</div>
+    </div>
+  </main>
+
+  <footer class="border-t border-zinc-900 py-6 text-center text-xs text-zinc-500">
+    Quick-commerce dark store prices change by neighborhood & stock levels. Verify final cart price on platform before checkout.
+  </footer>
+
+  <script>
+    const DATA_URL = "https://raw.githubusercontent.com/AshwinDikshit/quick-drop-engine/main/deals.json";
+    let allDeals = [];
+    let selectedAisle = "ALL";
+
+    async function loadDeals() {
+      const grid = document.getElementById("dealsGrid");
+      try {
+        const res = await fetch(`${DATA_URL}?t=${Date.now()}`);
+        if (!res.ok) throw new Error("Database not found yet");
+        const data = await res.json();
+        allDeals = Array.isArray(data.deals) ? data.deals : [];
+
+        if (data.lastUpdated) {
+          const dt = new Date(data.lastUpdated);
+          document.getElementById("lastUpdated").innerText =
+            `Last Scan: ${dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        }
+
+        buildFilters();
+        renderDeals();
+      } catch (err) {
+        grid.innerHTML = `
+          <div class="col-span-full bg-zinc-900 border border-zinc-800 rounded-xl p-8 text-center">
+            <p class="text-zinc-300 font-semibold mb-1">Waiting for live database...</p>
+            <p class="text-xs text-zinc-500">Make sure deals.json exists in your GitHub repo.</p>
+          </div>`;
+      }
+    }
+
+    function buildFilters() {
+      const cities = [...new Set(allDeals.map(d => d.city).filter(Boolean))];
+      const citySelect = document.getElementById("cityFilter");
+      citySelect.innerHTML = `<option value="ALL">📍 All Cities (${cities.length || 1})</option>` +
+        cities.map(c => `<option value="${c}">📍 ${c}</option>`).join("");
+
+      const aisles = ["ALL", ...new Set(allDeals.map(d => d.aisle).filter(Boolean))];
+      const pills = document.getElementById("aislePills");
+      pills.innerHTML = aisles.map(a => `
+        <button onclick="setAisle('${a.replace(/'/g, "\\'")}')"
+          class="px-3 py-1.5 rounded-full text-xs font-medium border transition ${
+            selectedAisle === a
+              ? 'bg-green-500/20 border-green-500 text-green-400'
+              : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-600'
+          }">
+          ${a === "ALL" ? "All Aisles" : a}
+        </button>
+      `).join("");
+    }
+
+    function setAisle(aisle) {
+      selectedAisle = aisle;
+      buildFilters();
+      renderDeals();
+    }
+
+    function renderDeals() {
+      const query = document.getElementById("searchInput").value.toLowerCase().trim();
+      const city = document.getElementById("cityFilter").value;
+      const sortBy = document.getElementById("sortFilter").value;
+
+      let filtered = allDeals.filter(d => {
+        const matchQuery = !query || d.name.toLowerCase().includes(query) || (d.aisle || "").toLowerCase().includes(query);
+        const matchCity = city === "ALL" || d.city === city;
+        const matchAisle = selectedAisle === "ALL" || d.aisle === selectedAisle;
+        return matchQuery && matchCity && matchAisle;
+      });
+
+      if (sortBy === "disc") filtered.sort((a, b) => b.disc - a.disc);
+      if (sortBy === "saved") filtered.sort((a, b) => b.saved - a.saved);
+      if (sortBy === "price") filtered.sort((a, b) => a.sell - b.sell);
+
+      document.getElementById("dealCount").innerText = `Showing ${filtered.length} verified mega drops`;
+      const grid = document.getElementById("dealsGrid");
+
+      if (filtered.length === 0) {
+        grid.innerHTML = `<div class="col-span-full text-center py-12 text-zinc-500">No deals match this filter right now.</div>`;
+        return;
+      }
+
+      grid.innerHTML = filtered.map(d => `
+        <div class="deal-card bg-zinc-900/90 border border-zinc-800 rounded-xl overflow-hidden flex flex-col">
+          <div class="relative bg-white h-44 flex items-center justify-center p-4">
+            <span class="absolute top-2.5 left-2.5 bg-green-600 text-white text-xs font-extrabold px-2.5 py-1 rounded-md shadow">
+              ${d.disc}% OFF
+            </span>
+            <span class="absolute top-2.5 right-2.5 bg-zinc-900/90 text-zinc-200 text-[11px] font-medium px-2 py-0.5 rounded">
+              ${d.platform || 'Instamart'}
+            </span>
+            ${d.image
+              ? `<img src="${d.image}" alt="${d.name}" class="max-h-36 object-contain" onerror="this.style.display='none'" />`
+              : `<div class="text-zinc-400 text-xs">No Image</div>`
+            }
+          </div>
+
+          <div class="p-4 flex flex-col flex-1 justify-between">
+            <div>
+              <div class="flex items-center justify-between text-[11px] text-zinc-400 mb-1.5">
+                <span>🏷️ ${d.aisle || 'Clearance'}</span>
+                <span>📍 ${d.city || 'Gurugram'}</span>
+              </div>
+              <h3 class="text-sm font-semibold text-zinc-100 line-clamp-2 mb-3">${d.name}</h3>
+            </div>
+
+            <div>
+              <div class="flex items-baseline gap-2 mb-3">
+                <span class="text-2xl font-extrabold text-green-400">₹${d.sell}</span>
+                <span class="text-sm text-zinc-500 line-through">₹${d.mrp}</span>
+                <span class="ml-auto text-xs font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">
+                  Save ₹${d.saved}
+                </span>
+              </div>
+
+              <a href="https://www.swiggy.com/instamart/search?custom_back=true&query=${encodeURIComponent(d.name.split('(')[0].trim())}"
+                 target="_blank"
+                 class="block w-full text-center bg-zinc-800 hover:bg-green-500 hover:text-zinc-950 text-white font-semibold text-xs py-2.5 rounded-lg transition">
+                Grab Deal on Instamart →
+              </a>
+            </div>
+          </div>
+        </div>
+      `).join("");
+    }
+
+    document.getElementById("searchInput").addEventListener("input", renderDeals);
+    document.getElementById("cityFilter").addEventListener("change", renderDeals);
+    document.getElementById("sortFilter").addEventListener("change", renderDeals);
+
+    loadDeals();
+  </script>
+</body>
+</html>
